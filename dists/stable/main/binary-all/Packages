@@ -1,0 +1,11 @@
+Package: indvim
+Version: 1.0.0
+Architecture: all
+Maintainer: Nasa
+Filename: pool/main/indvim.deb
+Size: 1558296
+MD5sum: 8ac4eb0eba0a47f0d33d1f2502eff6ac
+SHA1: 88caf219c32a1c9571b6edbf00861b03aa03458d
+SHA256: 93cead88cb11f403a2219f0da68ac1060ce203d321ac050547facfbf726a0706
+Description: INDVIM Text Editor - Super Cepat Tanpa Neovim
+
