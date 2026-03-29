@@ -25,12 +25,13 @@ var (
 	lines         = []string{""}
 	cursorX       = 0
 	cursorY       = 0
-	filename      = "" // Default kosong jika tidak ada argumen
+	filename      = "" 
 	
+	// Mode Default adalah VIEW
 	currentMode   = "VIEW" 
 	commandBuffer = ""     
 
-	// Fitur Tree Explorer
+	// File Tree Explorer
 	showTree      = false
 	isTreeFocused = false
 	currDir       = "."
@@ -69,7 +70,6 @@ func main() {
 	if len(os.Args) > 1 {
 		filename = os.Args[1]
 		info, err := os.Stat(filename)
-		// Jika argumen adalah folder, langsung buka Tree
 		if err == nil && info.IsDir() {
 			currDir = filename
 			filename = ""
@@ -79,8 +79,6 @@ func main() {
 		} else {
 			loadFromFile()
 		}
-	} else {
-		filename = ""
 	}
 
 	s, err := tcell.NewScreen()
@@ -101,6 +99,19 @@ func main() {
 		ev := s.PollEvent()
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
+			// LOGIK SAKTI ALT + I (Berjalan di mode apapun)
+			if ev.Modifiers()&tcell.ModAlt != 0 && (ev.Rune() == 'i' || ev.Rune() == 'I') {
+				if currentMode == "VIEW" {
+					currentMode = "INSERT"
+				} else if currentMode == "INSERT" {
+					currentMode = "COMMAND"
+					commandBuffer = "" 
+				} else {
+					currentMode = "VIEW"
+				}
+				continue 
+			}
+
 			// Toggle Explorer Tree dengan Ctrl + E
 			if ev.Key() == tcell.KeyCtrlE {
 				showTree = !showTree
@@ -109,15 +120,18 @@ func main() {
 				continue
 			}
 
-			// Tombol darurat
+			// Tombol darurat Save & Exit
 			if ev.Key() == tcell.KeyCtrlB {
-				saveToFile()
-				if filename != "" { return } // Hanya keluar jika berhasil disave
+				if filename != "" {
+					saveToFile()
+					return
+				}
 				continue
 			}
 
 			handleInput(ev)
 			
+			// Auto-save hanya jika di mode INSERT dan ada nama file
 			if currentMode == "INSERT" && filename != "" {
 				saveToFile()
 			}
@@ -131,8 +145,6 @@ func loadDir(path string) {
 	entries, err := os.ReadDir(path)
 	treeNodes = []FileNode{}
 	if err != nil { return }
-	
-	// Tambahkan opsi ".." untuk kembali ke folder sebelumnya
 	if path != "." && path != "/" {
 		treeNodes = append(treeNodes, FileNode{Name: "..", IsDir: true})
 	}
@@ -158,11 +170,7 @@ func loadFromFile() {
 }
 
 func saveToFile() {
-	if filename == "" {
-		commandBuffer = "Error: Cannot save without filename. Use :w <name>"
-		currentMode = "COMMAND"
-		return
-	}
+	if filename == "" { return }
 	content := strings.Join(lines, "\n")
 	os.WriteFile(filename, []byte(content), 0644)
 }
@@ -170,77 +178,50 @@ func saveToFile() {
 func draw(s tcell.Screen) {
 	s.Clear()
 	w, h := s.Size()
-
 	styleLineNum := tcell.StyleDefault.Foreground(tcell.ColorDimGray)
 	styleText := tcell.StyleDefault.Foreground(tcell.ColorWhite)
-
 	offsetX := 0
 
-	// 🌲 GAMBAR FILE TREE EXPLORER
 	if showTree {
 		offsetX = treeWidth
 		for y := 0; y < h-1; y++ {
 			s.SetContent(offsetX-1, y, '│', nil, tcell.StyleDefault.Foreground(tcell.ColorDimGray))
 		}
-
 		for i, node := range treeNodes {
 			if i >= h-2 { break }
-			
 			nodeStyle := tcell.StyleDefault.Foreground(tcell.ColorWhite)
-			if node.IsDir {
-				nodeStyle = tcell.StyleDefault.Foreground(tcell.ColorDodgerBlue).Bold(true)
-			}
-			
+			if node.IsDir { nodeStyle = tcell.StyleDefault.Foreground(tcell.ColorDodgerBlue).Bold(true) }
 			if isTreeFocused && i == treeCursor {
 				nodeStyle = nodeStyle.Background(tcell.ColorDimGray).Foreground(tcell.ColorWhite)
 			}
-
-			displayName := node.Name
-			if len(displayName) > treeWidth-3 {
-				displayName = displayName[:treeWidth-5] + ".."
-			}
-
 			prefix := "  "
 			if node.IsDir { prefix = "📁 " } else { prefix = "📄 " }
-
-			rowText := prefix + displayName
-			for x, char := range rowText {
-				s.SetContent(x, i, char, nil, nodeStyle)
-			}
+			rowText := prefix + node.Name
+			if len(rowText) > treeWidth-2 { rowText = rowText[:treeWidth-4] + ".." }
+			for x, char := range rowText { s.SetContent(x, i, char, nil, nodeStyle) }
 		}
 	}
 
-	// Logo ASCII (Hanya jika file kosong dan Tree tertutup)
 	if len(lines) == 1 && lines[0] == "" && currentMode != "COMMAND" && !showTree {
-		startX := (w - len(logo[0])) / 2
 		startY := (h - len(logo)) / 2
 		logoStyle := tcell.StyleDefault.Foreground(tcell.ColorMediumSpringGreen).Bold(true)
 		for y, line := range logo {
-			for x, char := range line {
-				s.SetContent(startX+x, startY+y, char, nil, logoStyle)
-			}
+			startX := (w - len(line)) / 2
+			for x, char := range line { s.SetContent(startX+x, startY+y, char, nil, logoStyle) }
 		}
 	}
 
-	// Render Teks & Nomor Baris Editor
 	for y, line := range lines {
 		if y >= h-2 { break }
-		
 		num := fmt.Sprintf(" %2d │ ", y+1)
-		for i, char := range num {
-			s.SetContent(offsetX+i, y, char, nil, styleLineNum)
-		}
-
-		wordStart := 0
-		currX := offsetX + 6
+		for i, char := range num { s.SetContent(offsetX+i, y, char, nil, styleLineNum) }
+		wordStart, currX := 0, offsetX+6
 		for i := 0; i <= len(line); i++ {
 			if i == len(line) || line[i] == ' ' {
 				word := line[wordStart:i]
 				color, isKw := keywords[word]
 				wordStyle := styleText
-				if isKw {
-					wordStyle = tcell.StyleDefault.Foreground(color).Bold(true)
-				}
+				if isKw { wordStyle = tcell.StyleDefault.Foreground(color).Bold(true) }
 				for j := wordStart; j < i; j++ {
 					s.SetContent(currX, y, rune(line[j]), nil, wordStyle)
 					currX++
@@ -254,15 +235,8 @@ func draw(s tcell.Screen) {
 		}
 	}
 
-	// 🎨 STATUS BAR KUSTOM NASA
-	displayFilename := filename
-	if displayFilename == "" {
-		displayFilename = "[No Name]"
-	}
-
 	var statusLeft string
 	var barStyle tcell.Style
-
 	if currentMode == "COMMAND" {
 		statusLeft = fmt.Sprintf(" :%s ", commandBuffer)
 		barStyle = tcell.StyleDefault.Background(tcell.ColorYellow).Foreground(tcell.ColorBlack).Bold(true)
@@ -274,50 +248,30 @@ func draw(s tcell.Screen) {
 		barStyle = tcell.StyleDefault.Background(tcell.ColorBlue).Foreground(tcell.ColorWhite).Bold(true)
 	}
 
-	// Gambar Background Status Bar
 	for i := 0; i < w; i++ { s.SetContent(i, h-1, ' ', nil, barStyle) }
-
-	// Gambar status kiri
 	currPos := 0
-	for _, char := range statusLeft {
-		s.SetContent(currPos, h-1, char, nil, barStyle)
-		currPos++
-	}
+	for _, char := range statusLeft { s.SetContent(currPos, h-1, char, nil, barStyle) ; currPos++ }
 
-	// Gambar Nama File dengan WARNA MERAH
-	// Perbaikan: Ambil warna background dari barStyle secara manual
-	_, bg, _ := barStyle.Decompose() 
+	displayFilename := filename
+	if displayFilename == "" { displayFilename = "[No Name]" }
+	_, bg, _ := barStyle.Decompose()
 	redStyle := tcell.StyleDefault.Background(bg).Foreground(tcell.ColorRed).Bold(true)
-	
-	for _, char := range displayFilename {
-		s.SetContent(currPos, h-1, char, nil, redStyle)
-		currPos++
-	}
+	for _, char := range displayFilename { s.SetContent(currPos, h-1, char, nil, redStyle) ; currPos++ }
 
 	statusRight := " | TREE: Ctrl+E "
-	for _, char := range statusRight {
-		s.SetContent(currPos, h-1, char, nil, barStyle)
-		currPos++
-	}
+	for _, char := range statusRight { s.SetContent(currPos, h-1, char, nil, barStyle) ; currPos++ }
 
-	// Logika Kursor
-	if isTreeFocused {
-		s.HideCursor()
-	} else if currentMode == "COMMAND" {
-		s.ShowCursor(len(statusLeft)-2+len(commandBuffer), h-1) // -2 to account for spaces
-	} else {
-		s.ShowCursor(offsetX+6+cursorX, cursorY)
-	}
+	if isTreeFocused { s.HideCursor() } else if currentMode == "COMMAND" {
+		s.ShowCursor(len(statusLeft)-1+len(commandBuffer), h-1)
+	} else { s.ShowCursor(offsetX+6+cursorX, cursorY) }
 	s.Show()
 }
 
 func handleInput(ev *tcell.EventKey) {
-	// LOGIKA TREE EXPLORER
 	if isTreeFocused {
 		switch ev.Key() {
 		case tcell.KeyUp: if treeCursor > 0 { treeCursor-- }
 		case tcell.KeyDown: if treeCursor < len(treeNodes)-1 { treeCursor++ }
-		case tcell.KeyLeft: isTreeFocused = false // Pindah ke editor
 		case tcell.KeyEnter:
 			node := treeNodes[treeCursor]
 			if node.IsDir {
@@ -326,61 +280,38 @@ func handleInput(ev *tcell.EventKey) {
 			} else {
 				filename = filepath.Join(currDir, node.Name)
 				loadFromFile()
-				isTreeFocused = false
-				currentMode = "VIEW"
+				isTreeFocused, currentMode = false, "VIEW"
 			}
+		case tcell.KeyLeft: isTreeFocused = false
 		}
 		return
 	}
 
-	// KEMBALI KE TREE JIKA TERTUTUP (Navigasi Kiri dari ujung Editor)
-	if ev.Key() == tcell.KeyLeft && cursorX == 0 && showTree && currentMode == "VIEW" {
-		isTreeFocused = true
-		return
-	}
-
-	// LOGIKA MODE COMMAND
 	if currentMode == "COMMAND" {
-		if ev.Key() == tcell.KeyEscape {
-			currentMode = "VIEW"
-			commandBuffer = ""
-		} else if ev.Key() == tcell.KeyEnter {
-			executeCommand()
+		if ev.Key() == tcell.KeyEscape { currentMode, commandBuffer = "VIEW", ""
+		} else if ev.Key() == tcell.KeyEnter { executeCommand()
 		} else if ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2 {
-			if len(commandBuffer) > 0 {
-				commandBuffer = commandBuffer[:len(commandBuffer)-1]
-			} else {
-				currentMode = "VIEW"
-			}
-		} else if ev.Key() == tcell.KeyRune {
-			commandBuffer += string(ev.Rune())
-		}
+			if len(commandBuffer) > 0 { commandBuffer = commandBuffer[:len(commandBuffer)-1] }
+		} else if ev.Key() == tcell.KeyRune { commandBuffer += string(ev.Rune()) }
 		return
 	}
 
-	// NAVIGASI (Bisa di View & Insert)
 	switch ev.Key() {
 	case tcell.KeyUp: if cursorY > 0 { cursorY-- }
 	case tcell.KeyDown: if cursorY < len(lines)-1 { cursorY++ }
-	case tcell.KeyLeft: if cursorX > 0 { cursorX-- }
+	case tcell.KeyLeft: if cursorX > 0 { cursorX-- } else if showTree && currentMode == "VIEW" { isTreeFocused = true }
 	case tcell.KeyRight: if cursorX < len(lines[cursorY]) { cursorX++ }
 	case tcell.KeyEscape: currentMode = "VIEW"
 	}
 
-	// NEOVIM BINDINGS
 	if currentMode == "VIEW" {
 		if ev.Key() == tcell.KeyRune {
-			if ev.Rune() == 'i' {
-				currentMode = "INSERT"
-			} else if ev.Rune() == ':' {
-				currentMode = "COMMAND"
-				commandBuffer = ""
-			}
+			if ev.Rune() == 'i' { currentMode = "INSERT"
+			} else if ev.Rune() == ':' { currentMode, commandBuffer = "COMMAND", "" }
 		}
 		return
 	}
 
-	// LOGIKA MODE INSERT
 	if currentMode == "INSERT" {
 		switch ev.Key() {
 		case tcell.KeyEnter:
@@ -406,29 +337,23 @@ func handleInput(ev *tcell.EventKey) {
 			cursorX++
 			if char == ' ' { checkSnippet() }
 		}
-		if cursorX > len(lines[cursorY]) { cursorX = len(lines[cursorY]) }
 	}
 }
 
 func executeCommand() {
-	parts := strings.Split(strings.TrimSpace(commandBuffer), " ")
+	parts := strings.Fields(commandBuffer)
 	if len(parts) == 0 { return }
-
 	cmd := parts[0]
-	
 	switch cmd {
 	case "w":
 		if len(parts) > 1 { filename = parts[1] }
-		saveToFile()
-	case "q":
-		os.Exit(0)
+		if filename != "" { saveToFile() }
+	case "q": os.Exit(0)
 	case "wq":
 		if len(parts) > 1 { filename = parts[1] }
-		saveToFile()
-		if filename != "" { os.Exit(0) }
+		if filename != "" { saveToFile() ; os.Exit(0) }
 	}
-	commandBuffer = ""
-	currentMode = "VIEW"
+	commandBuffer, currentMode = "", "VIEW"
 }
 
 func checkSnippet() {
@@ -436,7 +361,6 @@ func checkSnippet() {
 	words := strings.Fields(lines[cursorY][:cursorX-1])
 	if len(words) == 0 { return }
 	lastWord := words[len(words)-1]
-
 	if val, ok := snippets[lastWord]; ok {
 		startPos := cursorX - len(lastWord) - 1
 		lines[cursorY] = lines[cursorY][:startPos] + lines[cursorY][cursorX:]
