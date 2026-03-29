@@ -1,0 +1,4 @@
+indvim
+indvim-pkg/
+*.deb
+.DS_Store

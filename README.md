@@ -41,3 +41,11 @@ Cukup copy dan paste perintah sakti ini di Termux kamu:
 
 ```bash
 curl -s [https://raw.githubusercontent.com/hastagaming/indvim-repo/main/install.sh](https://raw.githubusercontent.com/hastagaming/indvim-repo/main/install.sh) | bash
+```
+---
+
+## 🛠 Build from Source
+If you want to compile INDVIM yourself:
+1. Clone this repo.
+2. Run `go build -o indvim main.go`.
+3. Run `./indvim`.
