@@ -49,3 +49,13 @@ If you want to compile INDVIM yourself:
 1. Clone this repo.
 2. Run `go build -o indvim main.go`.
 3. Run `./indvim`.
+
+---
+
+## 🚀 Cara Update ke Versi Terbaru
+Jika kamu melakukan **fork**, pastikan tetap sinkron dengan versi original (hastagaming) agar mendapatkan fitur terbaru:
+
+1. Jalankan skrip update:
+   ```bash
+   ./update.sh
+   ```
