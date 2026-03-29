@@ -25,11 +25,14 @@ var (
 	lines         = []string{""}
 	cursorX       = 0
 	cursorY       = 0
+	lineOffset    = 0 // Fitur Scrolling
 	filename      = "" 
 	
-	// Mode Default adalah VIEW
 	currentMode   = "VIEW" 
 	commandBuffer = ""     
+	infoMessage   = "" // Pesan peringatan
+
+	isSelectedAll = false // Fitur Alt+A
 
 	// File Tree Explorer
 	showTree      = false
@@ -73,8 +76,7 @@ func main() {
 		if err == nil && info.IsDir() {
 			currDir = filename
 			filename = ""
-			showTree = true
-			isTreeFocused = true
+			showTree, isTreeFocused = true, true
 			loadDir(currDir)
 		} else {
 			loadFromFile()
@@ -99,20 +101,18 @@ func main() {
 		ev := s.PollEvent()
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
-			// LOGIK SAKTI ALT + I (Berjalan di mode apapun)
+			// LOGIK ALT + I (Siklus Mode)
 			if ev.Modifiers()&tcell.ModAlt != 0 && (ev.Rune() == 'i' || ev.Rune() == 'I') {
-				if currentMode == "VIEW" {
-					currentMode = "INSERT"
-				} else if currentMode == "INSERT" {
-					currentMode = "COMMAND"
-					commandBuffer = "" 
-				} else {
-					currentMode = "VIEW"
-				}
+				if currentMode == "VIEW" { currentMode = "INSERT" } else if currentMode == "INSERT" { currentMode, commandBuffer = "COMMAND", "" } else { currentMode = "VIEW" }
 				continue 
 			}
 
-			// Toggle Explorer Tree dengan Ctrl + E
+			// LOGIK ALT + A (Select All)
+			if ev.Modifiers()&tcell.ModAlt != 0 && (ev.Rune() == 'a' || ev.Rune() == 'A') {
+				isSelectedAll = !isSelectedAll
+				continue
+			}
+
 			if ev.Key() == tcell.KeyCtrlE {
 				showTree = !showTree
 				isTreeFocused = showTree
@@ -120,21 +120,14 @@ func main() {
 				continue
 			}
 
-			// Tombol darurat Save & Exit
 			if ev.Key() == tcell.KeyCtrlB {
-				if filename != "" {
-					saveToFile()
-					return
-				}
+				if filename != "" { saveToFile() ; printToTerminal() ; return }
 				continue
 			}
 
 			handleInput(ev)
 			
-			// Auto-save hanya jika di mode INSERT dan ada nama file
-			if currentMode == "INSERT" && filename != "" {
-				saveToFile()
-			}
+			if currentMode == "INSERT" && filename != "" { saveToFile() }
 		case *tcell.EventResize:
 			s.Sync()
 		}
@@ -145,27 +138,16 @@ func loadDir(path string) {
 	entries, err := os.ReadDir(path)
 	treeNodes = []FileNode{}
 	if err != nil { return }
-	if path != "." && path != "/" {
-		treeNodes = append(treeNodes, FileNode{Name: "..", IsDir: true})
-	}
-	for _, e := range entries {
-		treeNodes = append(treeNodes, FileNode{Name: e.Name(), IsDir: e.IsDir()})
-	}
+	if path != "." && path != "/" { treeNodes = append(treeNodes, FileNode{Name: "..", IsDir: true}) }
+	for _, e := range entries { treeNodes = append(treeNodes, FileNode{Name: e.Name(), IsDir: e.IsDir()}) }
 	treeCursor = 0
 }
 
 func loadFromFile() {
 	data, err := os.ReadFile(filename)
-	if err != nil {
-		lines = []string{""}
-		return
-	}
+	if err != nil { lines = []string{""} ; return }
 	content := string(data)
-	if content == "" {
-		lines = []string{""}
-	} else {
-		lines = strings.Split(content, "\n")
-	}
+	if content == "" { lines = []string{""} } else { lines = strings.Split(content, "\n") }
 	cursorX, cursorY = 0, 0
 }
 
@@ -175,35 +157,46 @@ func saveToFile() {
 	os.WriteFile(filename, []byte(content), 0644)
 }
 
+func printToTerminal() {
+	fmt.Println("\n--- [ INDVIM Final Output ] ---")
+	for _, line := range lines { fmt.Println(line) }
+	fmt.Println("--- [ End of Output ] ---\n")
+}
+
 func draw(s tcell.Screen) {
 	s.Clear()
 	w, h := s.Size()
+	mainH := h - 1
+
+	// LOGIKA SCROLLING
+	if cursorY < lineOffset { lineOffset = cursorY }
+	if cursorY >= lineOffset+mainH { lineOffset = cursorY - mainH + 1 }
+
 	styleLineNum := tcell.StyleDefault.Foreground(tcell.ColorDimGray)
 	styleText := tcell.StyleDefault.Foreground(tcell.ColorWhite)
-	offsetX := 0
+	styleSel := tcell.StyleDefault.Background(tcell.ColorDimGray).Foreground(tcell.ColorWhite)
 
+	offsetX := 0
 	if showTree {
 		offsetX = treeWidth
-		for y := 0; y < h-1; y++ {
-			s.SetContent(offsetX-1, y, '│', nil, tcell.StyleDefault.Foreground(tcell.ColorDimGray))
-		}
+		for y := 0; y < mainH; y++ { s.SetContent(offsetX-1, y, '│', nil, tcell.StyleDefault.Foreground(tcell.ColorDimGray)) }
 		for i, node := range treeNodes {
-			if i >= h-2 { break }
+			if i >= mainH { break }
 			nodeStyle := tcell.StyleDefault.Foreground(tcell.ColorWhite)
 			if node.IsDir { nodeStyle = tcell.StyleDefault.Foreground(tcell.ColorDodgerBlue).Bold(true) }
-			if isTreeFocused && i == treeCursor {
-				nodeStyle = nodeStyle.Background(tcell.ColorDimGray).Foreground(tcell.ColorWhite)
-			}
-			prefix := "  "
-			if node.IsDir { prefix = "📁 " } else { prefix = "📄 " }
-			rowText := prefix + node.Name
-			if len(rowText) > treeWidth-2 { rowText = rowText[:treeWidth-4] + ".." }
-			for x, char := range rowText { s.SetContent(x, i, char, nil, nodeStyle) }
+			if isTreeFocused && i == treeCursor { nodeStyle = nodeStyle.Background(tcell.ColorDimGray) }
+			prefix := "📁 "
+			if !node.IsDir { prefix = "📄 " }
+			name := node.Name
+			if len(name) > treeWidth-5 { name = name[:treeWidth-7] + ".." }
+			row := prefix + name
+			for x, char := range row { s.SetContent(x, i, char, nil, nodeStyle) }
 		}
 	}
 
+	// Tampilkan Logo jika kosong
 	if len(lines) == 1 && lines[0] == "" && currentMode != "COMMAND" && !showTree {
-		startY := (h - len(logo)) / 2
+		startY := (mainH - len(logo)) / 2
 		logoStyle := tcell.StyleDefault.Foreground(tcell.ColorMediumSpringGreen).Bold(true)
 		for y, line := range logo {
 			startX := (w - len(line)) / 2
@@ -211,23 +204,31 @@ func draw(s tcell.Screen) {
 		}
 	}
 
-	for y, line := range lines {
-		if y >= h-2 { break }
-		num := fmt.Sprintf(" %2d │ ", y+1)
+	// Render Editor
+	for y := 0; y < mainH; y++ {
+		lineIdx := y + lineOffset
+		if lineIdx >= len(lines) { break }
+		line := lines[lineIdx]
+
+		num := fmt.Sprintf(" %2d │ ", lineIdx+1)
 		for i, char := range num { s.SetContent(offsetX+i, y, char, nil, styleLineNum) }
-		wordStart, currX := 0, offsetX+6
+
+		currX, wordStart := offsetX+6, 0
 		for i := 0; i <= len(line); i++ {
 			if i == len(line) || line[i] == ' ' {
 				word := line[wordStart:i]
 				color, isKw := keywords[word]
 				wordStyle := styleText
-				if isKw { wordStyle = tcell.StyleDefault.Foreground(color).Bold(true) }
+				if isSelectedAll { wordStyle = styleSel } else if isKw { wordStyle = tcell.StyleDefault.Foreground(color).Bold(true) }
+				
 				for j := wordStart; j < i; j++ {
 					s.SetContent(currX, y, rune(line[j]), nil, wordStyle)
 					currX++
 				}
 				if i < len(line) {
-					s.SetContent(currX, y, ' ', nil, styleText)
+					spStyle := styleText
+					if isSelectedAll { spStyle = styleSel }
+					s.SetContent(currX, y, ' ', nil, spStyle)
 					currX++
 				}
 				wordStart = i + 1
@@ -235,11 +236,15 @@ func draw(s tcell.Screen) {
 		}
 	}
 
+	// STATUS BAR
 	var statusLeft string
 	var barStyle tcell.Style
-	if currentMode == "COMMAND" {
-		statusLeft = fmt.Sprintf(" :%s ", commandBuffer)
+	if infoMessage != "" {
+		statusLeft = " " + infoMessage + " "
 		barStyle = tcell.StyleDefault.Background(tcell.ColorYellow).Foreground(tcell.ColorBlack).Bold(true)
+	} else if currentMode == "COMMAND" {
+		statusLeft = fmt.Sprintf(" :%s ", commandBuffer)
+		barStyle = tcell.StyleDefault.Background(tcell.ColorOrange).Foreground(tcell.ColorBlack).Bold(true)
 	} else if currentMode == "INSERT" {
 		statusLeft = " [ INSERT ] | name: "
 		barStyle = tcell.StyleDefault.Background(tcell.ColorMediumSpringGreen).Foreground(tcell.ColorBlack).Bold(true)
@@ -258,12 +263,12 @@ func draw(s tcell.Screen) {
 	redStyle := tcell.StyleDefault.Background(bg).Foreground(tcell.ColorRed).Bold(true)
 	for _, char := range displayFilename { s.SetContent(currPos, h-1, char, nil, redStyle) ; currPos++ }
 
-	statusRight := " | TREE: Ctrl+E "
+	statusRight := " | ALT+A: Select | Ctrl+E: Tree "
 	for _, char := range statusRight { s.SetContent(currPos, h-1, char, nil, barStyle) ; currPos++ }
 
 	if isTreeFocused { s.HideCursor() } else if currentMode == "COMMAND" {
 		s.ShowCursor(len(statusLeft)-1+len(commandBuffer), h-1)
-	} else { s.ShowCursor(offsetX+6+cursorX, cursorY) }
+	} else { s.ShowCursor(offsetX+6+cursorX, cursorY-lineOffset) }
 	s.Show()
 }
 
@@ -274,10 +279,7 @@ func handleInput(ev *tcell.EventKey) {
 		case tcell.KeyDown: if treeCursor < len(treeNodes)-1 { treeCursor++ }
 		case tcell.KeyEnter:
 			node := treeNodes[treeCursor]
-			if node.IsDir {
-				currDir = filepath.Join(currDir, node.Name)
-				loadDir(currDir)
-			} else {
+			if node.IsDir { currDir = filepath.Join(currDir, node.Name) ; loadDir(currDir) } else {
 				filename = filepath.Join(currDir, node.Name)
 				loadFromFile()
 				isTreeFocused, currentMode = false, "VIEW"
@@ -288,9 +290,7 @@ func handleInput(ev *tcell.EventKey) {
 	}
 
 	if currentMode == "COMMAND" {
-		if ev.Key() == tcell.KeyEscape { currentMode, commandBuffer = "VIEW", ""
-		} else if ev.Key() == tcell.KeyEnter { executeCommand()
-		} else if ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2 {
+		if ev.Key() == tcell.KeyEscape { currentMode, commandBuffer = "VIEW", "" } else if ev.Key() == tcell.KeyEnter { executeCommand() } else if ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2 {
 			if len(commandBuffer) > 0 { commandBuffer = commandBuffer[:len(commandBuffer)-1] }
 		} else if ev.Key() == tcell.KeyRune { commandBuffer += string(ev.Rune()) }
 		return
@@ -301,13 +301,12 @@ func handleInput(ev *tcell.EventKey) {
 	case tcell.KeyDown: if cursorY < len(lines)-1 { cursorY++ }
 	case tcell.KeyLeft: if cursorX > 0 { cursorX-- } else if showTree && currentMode == "VIEW" { isTreeFocused = true }
 	case tcell.KeyRight: if cursorX < len(lines[cursorY]) { cursorX++ }
-	case tcell.KeyEscape: currentMode = "VIEW"
+	case tcell.KeyEscape: currentMode, isSelectedAll, infoMessage = "VIEW", false, ""
 	}
 
 	if currentMode == "VIEW" {
 		if ev.Key() == tcell.KeyRune {
-			if ev.Rune() == 'i' { currentMode = "INSERT"
-			} else if ev.Rune() == ':' { currentMode, commandBuffer = "COMMAND", "" }
+			if ev.Rune() == 'i' { currentMode = "INSERT" } else if ev.Rune() == ':' { currentMode, commandBuffer = "COMMAND", "" }
 		}
 		return
 	}
@@ -328,11 +327,11 @@ func handleInput(ev *tcell.EventKey) {
 				prevLen := len(lines[cursorY-1])
 				lines[cursorY-1] += lines[cursorY]
 				lines = append(lines[:cursorY], lines[cursorY+1:]...)
-				cursorY--
-				cursorX = prevLen
+				cursorY-- ; cursorX = prevLen
 			}
 		case tcell.KeyRune:
 			char := ev.Rune()
+			if strings.ContainsRune("{};()", char) { infoMessage = "INFO: Use Ctrl+B to save!" } else { infoMessage = "" }
 			lines[cursorY] = lines[cursorY][:cursorX] + string(char) + lines[cursorY][cursorX:]
 			cursorX++
 			if char == ' ' { checkSnippet() }
@@ -345,13 +344,9 @@ func executeCommand() {
 	if len(parts) == 0 { return }
 	cmd := parts[0]
 	switch cmd {
-	case "w":
-		if len(parts) > 1 { filename = parts[1] }
-		if filename != "" { saveToFile() }
-	case "q": os.Exit(0)
-	case "wq":
-		if len(parts) > 1 { filename = parts[1] }
-		if filename != "" { saveToFile() ; os.Exit(0) }
+	case "w": if len(parts) > 1 { filename = parts[1] } ; if filename != "" { saveToFile() }
+	case "q": printToTerminal() ; os.Exit(0)
+	case "wq": if len(parts) > 1 { filename = parts[1] } ; if filename != "" { saveToFile() ; printToTerminal() ; os.Exit(0) }
 	}
 	commandBuffer, currentMode = "", "VIEW"
 }
