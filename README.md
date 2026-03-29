@@ -59,3 +59,7 @@ Jika kamu melakukan **fork**, pastikan tetap sinkron dengan versi original (hast
    ```bash
    ./update.sh
    ```
+--
+
+##catatan PENTING!!
+Untuk menginstal INDVIM, cukup jalankan chmod +x install.sh && ./install.sh. Skrip ini akan mengonfigurasi INDVIM agar bisa berjalan secara global di sistem kamu!
